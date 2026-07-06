@@ -250,6 +250,46 @@ def test_generate_sql_covers_all_mvp_sql_table_classes(tmp_path):
     assert len(inventory.tables) == 38
 
 
+def test_generate_sql_uses_sql_inventory_templates_with_real_columns(tmp_path):
+    product = parse_product(SPEC)
+    source_inventory = inspect_sql(SQL)
+    output = tmp_path / "generated.sql"
+    output.write_text(generate_sql(product, source_inventory), encoding="utf-8")
+
+    sql = output.read_text(encoding="utf-8")
+    generated_inventory = inspect_sql(output)
+
+    assert "everida_payload" not in sql
+    assert "everida_review_status" not in sql
+    assert "INSERT INTO LMRISK (riskcode, riskver, riskname, riskshortname" in sql
+    assert "INSERT INTO LMDUTYPAY (payplancode, payplanname, type, payintv" in sql
+    assert set(generated_inventory.tables) == EXPECTED_MVP_SQL_TABLES
+
+
+def test_generate_sql_maps_core_table_values_from_product(tmp_path):
+    spec = _write_custom_product_docx(tmp_path)
+    product = parse_product(spec)
+    source_inventory = inspect_sql(SQL)
+    output = tmp_path / "generated.sql"
+    output.write_text(generate_sql(product, source_inventory), encoding="utf-8")
+
+    sql = output.read_text(encoding="utf-8")
+    generated_inventory = inspect_sql(output)
+    risk_summary = next(summary for summary in generated_inventory.table_summaries if summary.name == "LMRISK")
+
+    assert risk_summary.sample_insert_values["riskcode"] == "999001"
+    assert risk_summary.sample_insert_values["riskname"] == "星河年金保险（分红型）"
+    assert risk_summary.sample_insert_values["riskshortname"] == "星河"
+    assert "星河年金保险（分红型）保障方案A责任" in sql
+    assert "星河年金保险（分红型）保障方案B责任" in sql
+    assert "星河年金保险（分红型）保障方案A责任缴费" in sql
+    assert "成长守护金" in sql
+    assert "满期保险金" in sql
+    assert "身故保险金" in sql
+    assert "120078" not in sql
+    assert "中邮未来星" not in sql
+
+
 def test_validate_product_outputs_markdown_report():
     product = parse_product(SPEC)
     report = validate_product(product, TEMPLATE, SQL)

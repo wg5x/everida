@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from contextlib import contextmanager
+import logging
 import re
 from pathlib import Path
 from typing import Any
@@ -23,9 +25,10 @@ def inspect_sql(path: str | Path) -> SqlInventory:
     summary_by_table: dict[str, dict[str, Any]] = {}
     for index, statement_text in enumerate(raw_statements, start=1):
         statement_type = _statement_type(statement_text)
-        tables = _extract_tables(statement_text)
+        with _suppress_sqlglot_warnings():
+            tables = _extract_tables(statement_text)
+            insert_table, insert_columns, insert_values = _extract_insert_shape(statement_text)
         all_tables.update(tables)
-        insert_table, insert_columns, insert_values = _extract_insert_shape(statement_text)
         statements.append(
             SqlStatement(
                 statement_type=statement_type,
@@ -115,6 +118,17 @@ def _sql_value(value: exp.Expression) -> Any:
     if isinstance(value, exp.Literal):
         return value.this
     return value.sql()
+
+
+@contextmanager
+def _suppress_sqlglot_warnings():
+    logger = logging.getLogger("sqlglot")
+    was_disabled = logger.disabled
+    logger.disabled = True
+    try:
+        yield
+    finally:
+        logger.disabled = was_disabled
 
 
 def _extract_product_codes(sql_text: str, path: Path) -> list[str]:

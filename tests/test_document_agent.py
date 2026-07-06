@@ -49,3 +49,11 @@ def test_inspect_sql_outputs_tables_statements_and_product_code():
     duty_pay_summary = next(summary for summary in inventory.table_summaries if summary.name == "LMDUTYPAY")
     assert "payplancode" in duty_pay_summary.insert_columns
     assert duty_pay_summary.sample_insert_values["payplanname"] == "中邮未来星年金保险(分红型)保障方案一责任缴费"
+
+
+def test_inspect_sql_does_not_emit_sqlglot_conversion_warnings(caplog):
+    caplog.set_level("WARNING", logger="sqlglot")
+
+    inspect_sql(SQL)
+
+    assert "Conversion format is required for TO_NUMBER" not in caplog.text

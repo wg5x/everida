@@ -9,7 +9,15 @@ from pathlib import Path
 from openpyxl import load_workbook
 
 from everida.agents.document import parse_document
-from everida.schemas import FieldEvidence, ParsedDocument, PipelineResult, ProductConfig, ValidationIssue
+from everida.schemas import (
+    FieldEvidence,
+    ParsedDocument,
+    PipelineResult,
+    ProductConfig,
+    SqlInventory,
+    SqlTableSummary,
+    ValidationIssue,
+)
 from everida.tools.sql import inspect_sql
 
 
@@ -29,6 +37,13 @@ BENEFIT_NAMES = [
 class ProductIdentity:
     risk_code: str
     risk_name: str
+
+
+@dataclass(frozen=True)
+class SqlTemplateContext:
+    source_risk_code: str = ""
+    source_risk_name: str = ""
+    source_short_name: str = ""
 
 
 PRODUCT_IDENTITY_RE = re.compile(
@@ -224,36 +239,18 @@ def _fill_payment_plans(workbook, product: ProductConfig) -> None:
         sheet.cell(row=index, column=2).value = f"{scheme}责任缴费"
 
 
-def generate_sql(product: ProductConfig, table_names: list[str] | None = None) -> str:
-    tables = _draft_table_names(table_names)
-    payload = json.dumps(
-        {
-            "risk_code": product.risk_code,
-            "risk_name": product.risk_name,
-            "short_name": product.short_name,
-            "product_type": product.product_type,
-            "bonus_type": product.bonus_type,
-            "coverage_schemes": product.coverage_schemes,
-            "payment_options": product.payment_options,
-            "insurance_periods": product.insurance_periods,
-            "benefit_rules": product.benefit_rules,
-        },
-        ensure_ascii=False,
-        separators=(",", ":"),
-    )
-    statements = [
-        (
-            f"-- {table}: draft placeholder generated from structured product config.\n"
-            f"INSERT INTO {table} (riskcode, riskname, everida_review_status, everida_payload)\n"
-            f"VALUES ('{product.risk_code}', '{_escape_sql(product.risk_name)}', "
-            f"'DRAFT_REVIEW_REQUIRED', '{_escape_sql(payload)}');"
-        )
-        for table in tables
-    ]
+def generate_sql(product: ProductConfig, template_source: SqlInventory | list[str] | None = None) -> str:
+    templates = _draft_table_templates(template_source)
+    context = _sql_template_context(templates)
+    statements: list[str] = []
+    for template in templates:
+        columns = template.insert_columns or _fallback_insert_columns(template.name)
+        for row_values in _draft_rows(template, product, context):
+            statements.append(_render_insert(template.name, columns, row_values))
     return f"""-- Everida generated draft SQL. Human review required before execution.
 -- Product: {product.risk_code} {product.risk_name}
--- Scope: {len(tables)} product factory table classes.
--- Note: column mappings are placeholders and must be reviewed before adapting to production DDL.
+-- Scope: {len(templates)} product factory table classes.
+-- Note: generated using sample SQL field templates; human review required before production execution.
 
 {chr(10).join(statements)}
 """
@@ -447,7 +444,7 @@ def run_product_pipeline(spec: str | Path, template: str | Path, sql: str | Path
     artifacts["parsed_document_markdown"].write_text(parsed.markdown, encoding="utf-8")
     artifacts["product_json"].write_text(product.model_dump_json(indent=2), encoding="utf-8")
     fill_template(product, template, artifacts["filled_xlsx"])
-    artifacts["generated_sql"].write_text(generate_sql(product, sql_inventory.tables), encoding="utf-8")
+    artifacts["generated_sql"].write_text(generate_sql(product, sql_inventory), encoding="utf-8")
     artifacts["sql_inventory_json"].write_text(sql_inventory.model_dump_json(indent=2), encoding="utf-8")
     artifacts["validate_report_markdown"].write_text(validate_product(product, template, sql), encoding="utf-8")
 
@@ -526,6 +523,172 @@ def _dedupe(values: list[str]) -> list[str]:
 def _draft_table_names(table_names: list[str] | None = None) -> list[str]:
     source = table_names or MVP_SQL_TABLES
     return _dedupe([table.upper() for table in source])
+
+
+def _draft_table_templates(template_source: SqlInventory | list[str] | None = None) -> list[SqlTableSummary]:
+    if isinstance(template_source, SqlInventory) and template_source.table_summaries:
+        return template_source.table_summaries
+    table_names = template_source if isinstance(template_source, list) else None
+    return [
+        SqlTableSummary(
+            name=table,
+            statement_types=["INSERT"],
+            insert_columns=_fallback_insert_columns(table),
+            sample_insert_values={},
+            source_ref="everida:sql-template:fallback",
+        )
+        for table in _draft_table_names(table_names)
+    ]
+
+
+def _fallback_insert_columns(table_name: str = "") -> list[str]:
+    if table_name == "LMDUTYGET":
+        return ["riskcode", "riskname", "getdutyname"]
+    return ["riskcode", "riskname"]
+
+
+def _sql_template_context(templates: list[SqlTableSummary]) -> SqlTemplateContext:
+    risk_template = next((template for template in templates if template.name == "LMRISK"), None)
+    if risk_template is None:
+        return SqlTemplateContext()
+    values = risk_template.sample_insert_values
+    return SqlTemplateContext(
+        source_risk_code=str(values.get("riskcode") or ""),
+        source_risk_name=str(values.get("riskname") or ""),
+        source_short_name=str(values.get("riskshortname") or ""),
+    )
+
+
+def _draft_rows(
+    template: SqlTableSummary,
+    product: ProductConfig,
+    context: SqlTemplateContext,
+) -> list[list[object]]:
+    columns = template.insert_columns or _fallback_insert_columns(template.name)
+    variants = _template_variants(template.name, product)
+    rows: list[list[object]] = []
+    for variant in variants:
+        rows.append(
+            [
+                _mapped_sql_value(
+                    template.name,
+                    column,
+                    template.sample_insert_values.get(column),
+                    product,
+                    context,
+                    variant,
+                )
+                for column in columns
+            ]
+        )
+    return rows
+
+
+def _template_variants(table_name: str, product: ProductConfig) -> list[dict[str, object]]:
+    if table_name in {"LMRISKDUTY", "LMDUTY"}:
+        schemes = product.coverage_schemes or [""]
+        return [{"index": index, "scheme": scheme} for index, scheme in enumerate(schemes)]
+    if table_name in {"LMDUTYPAY", "LMCALMODE"}:
+        schemes = product.coverage_schemes or [""]
+        return [{"index": index, "scheme": scheme} for index, scheme in enumerate(schemes)]
+    if table_name == "LMDUTYGET":
+        benefits = product.benefit_rules or [""]
+        return [{"index": index, "benefit": benefit} for index, benefit in enumerate(benefits)]
+    return [{"index": 0}]
+
+
+def _mapped_sql_value(
+    table_name: str,
+    column: str,
+    sample_value: object,
+    product: ProductConfig,
+    context: SqlTemplateContext,
+    variant: dict[str, object],
+) -> object:
+    column_name = column.lower()
+    index = int(variant.get("index") or 0)
+    scheme = str(variant.get("scheme") or "")
+    benefit = str(variant.get("benefit") or "")
+
+    if column_name in {"riskcode", "origriskcode"}:
+        return product.risk_code
+    if column_name in {"riskname", "riskstatname"}:
+        return product.risk_name
+    if column_name == "riskshortname":
+        return product.short_name
+
+    if table_name in {"LMRISKDUTY", "LMDUTY"} and column_name == "dutycode":
+        return _increment_code(str(sample_value or "D00001"), index)
+    if table_name == "LMDUTY" and column_name == "dutyname":
+        return f"{product.risk_name}{scheme}责任"
+    if table_name == "LMDUTY" and column_name == "payendyear":
+        return _max_year_value(product.payment_options) or sample_value
+    if table_name == "LMDUTY" and column_name in {"getyear", "insuyear"}:
+        period, _flag = _max_period_value(product.insurance_periods)
+        return period or sample_value
+
+    if table_name == "LMDUTYGET" and column_name == "getdutycode":
+        return _increment_code(str(sample_value or "G00001"), index)
+    if table_name == "LMDUTYGET" and column_name == "getdutyname":
+        return benefit
+
+    if table_name == "LMDUTYPAY" and column_name == "payplancode":
+        return _increment_code(str(sample_value or "P00001"), index)
+    if table_name == "LMDUTYPAY" and column_name == "payplanname":
+        return f"{product.risk_name}{scheme}责任缴费"
+    if table_name == "LMDUTYPAY" and column_name == "othcalcode":
+        return _increment_code(str(sample_value or "IP0001"), index)
+
+    if table_name == "LMCALMODE" and column_name == "calcode":
+        return _increment_code(str(sample_value or "IP0001"), index)
+    if table_name == "LMCALMODE" and column_name == "remark":
+        return f"{product.risk_name}{scheme}责任缴费"
+
+    if isinstance(sample_value, str):
+        return _replace_template_identity(sample_value, product, context)
+    return sample_value
+
+
+def _replace_template_identity(value: str, product: ProductConfig, context: SqlTemplateContext) -> str:
+    result = value
+    replacements = {
+        context.source_risk_code: product.risk_code,
+        context.source_risk_name: product.risk_name,
+        context.source_risk_name.replace("（", "(").replace("）", ")"): product.risk_name,
+        context.source_short_name: product.short_name,
+    }
+    for source, target in replacements.items():
+        if source:
+            result = result.replace(source, target)
+    return result
+
+
+def _increment_code(value: str, offset: int) -> str:
+    match = re.match(r"^(?P<prefix>.*?)(?P<number>\d+)$", value)
+    if not match:
+        return value
+    number = match.group("number")
+    return f"{match.group('prefix')}{str(int(number) + offset).zfill(len(number))}"
+
+
+def _render_insert(table_name: str, columns: list[str], values: list[object]) -> str:
+    rendered_columns = ", ".join(columns)
+    rendered_values = ", ".join(_render_sql_value(value) for value in values)
+    return f"-- {table_name}: generated using SQL inventory template.\nINSERT INTO {table_name} ({rendered_columns})\nVALUES ({rendered_values});"
+
+
+def _render_sql_value(value: object) -> str:
+    if value is None:
+        return "null"
+    value_text = str(value)
+    if _looks_like_sql_expression(value_text):
+        return value_text
+    return f"'{_escape_sql(value_text)}'"
+
+
+def _looks_like_sql_expression(value: str) -> bool:
+    upper = value.strip().upper()
+    return upper.startswith(("TO_DATE(", "TO_NUMBER(", "SYSDATE", "CASE "))
 
 
 def _missing_template_sheets(sheet_names: list[str]) -> list[str]:

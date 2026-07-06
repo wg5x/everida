@@ -103,6 +103,7 @@ def fill_template(product: ProductConfig, template: str | Path, out: str | Path)
 
     workbook = load_workbook(output)
     _fill_product_base_info(workbook, product)
+    _fill_duty_definitions(workbook, product)
     if "Everida产品摘要" in workbook.sheetnames:
         del workbook["Everida产品摘要"]
     sheet = workbook.create_sheet("Everida产品摘要")
@@ -140,6 +141,24 @@ def _fill_product_base_info(workbook, product: ProductConfig) -> None:
             continue
         target_cell = sheet.cell(row=field_cell.row, column=4)
         target_cell.value = values_by_field[field_cell.value]
+
+
+def _fill_duty_definitions(workbook, product: ProductConfig) -> None:
+    if "责任定义" not in workbook.sheetnames:
+        return
+    sheet = workbook["责任定义"]
+    payment_year = _max_year_value(product.payment_options)
+    insurance_period, insurance_period_flag = _max_period_value(product.insurance_periods)
+    for index, scheme in enumerate(product.coverage_schemes, start=2):
+        if index > sheet.max_row:
+            break
+        sheet.cell(row=index, column=2).value = f"{scheme}责任"
+        if payment_year:
+            sheet.cell(row=index, column=3).value = payment_year
+            sheet.cell(row=index, column=4).value = "Y-年"
+        if insurance_period:
+            sheet.cell(row=index, column=5).value = insurance_period
+            sheet.cell(row=index, column=6).value = insurance_period_flag
 
 
 def generate_sql(product: ProductConfig) -> str:
@@ -383,6 +402,33 @@ def _age_periods_from_text(text: str) -> list[str]:
 
 def _extract_rules(text: str, keywords: list[str]) -> list[str]:
     return [keyword for keyword in keywords if keyword in text]
+
+
+def _max_year_value(values: list[str]) -> str:
+    years = []
+    for value in values:
+        match = re.search(r"(\d+)\s*年", value)
+        if match:
+            years.append(int(match.group(1)))
+    return str(max(years)) if years else ""
+
+
+def _max_period_value(values: list[str]) -> tuple[str, str]:
+    fixed_years: list[int] = []
+    age_years: list[int] = []
+    for value in values:
+        fixed_match = re.search(r"^(\d+)\s*年$", value)
+        if fixed_match:
+            fixed_years.append(int(fixed_match.group(1)))
+            continue
+        age_match = re.search(r"至\s*(\d+)\s*岁", value)
+        if age_match:
+            age_years.append(int(age_match.group(1)))
+    if fixed_years:
+        return str(max(fixed_years)), "Y-年"
+    if age_years:
+        return str(max(age_years)), "A-岁"
+    return "", ""
 
 
 def _evidence_for_value(parsed: ParsedDocument, value: str, keyword: str, confidence: float) -> FieldEvidence:

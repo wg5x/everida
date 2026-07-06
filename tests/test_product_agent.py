@@ -35,25 +35,7 @@ def test_parse_product_extracts_core_120078_fields():
 
 
 def test_parse_product_extracts_code_and_name_without_120078_hardcoding(tmp_path):
-    spec = tmp_path / "custom_product.docx"
-    document = Document()
-    document.add_paragraph("999001-星河年金保险（分红型）")
-    document.add_paragraph("产品类型：年金保险")
-    document.add_paragraph("保障方案：保障方案A、保障方案B")
-    table = document.add_table(rows=3, cols=4)
-    table.cell(0, 0).text = "缴费期间*"
-    table.cell(0, 1).text = "3-Y-年"
-    table.cell(0, 2).text = "5-Y-年"
-    table.cell(0, 3).text = "10-Y-年"
-    table.cell(1, 0).text = "保险期间*"
-    table.cell(1, 1).text = "至25岁"
-    table.cell(1, 2).text = "至30岁"
-    table.cell(1, 3).text = "30-Y-年"
-    table.cell(2, 0).text = "给付责任名称*"
-    table.cell(2, 1).text = "成长守护金"
-    table.cell(2, 2).text = "满期保险金"
-    table.cell(2, 3).text = "身故保险金"
-    document.save(spec)
+    spec = _write_custom_product_docx(tmp_path)
 
     product = parse_product(spec)
 
@@ -117,6 +99,26 @@ def test_fill_template_maps_product_base_info_into_original_sheet(tmp_path):
     assert sheet["D3"].value == "中邮未来星年金保险（分红型）"
     assert sheet["D4"].value == "未来星"
     assert sheet["D2"].style_id == load_workbook(TEMPLATE)["产品基础信息"]["D2"].style_id
+
+
+def test_fill_template_maps_duty_definitions_into_original_sheet(tmp_path):
+    spec = _write_custom_product_docx(tmp_path)
+    product = parse_product(spec)
+    output = tmp_path / "filled.xlsx"
+
+    fill_template(product, TEMPLATE, output)
+
+    workbook = load_workbook(output)
+    original = load_workbook(TEMPLATE)
+    sheet = workbook["责任定义"]
+    original_sheet = original["责任定义"]
+    assert sheet["B2"].value == "保障方案A责任"
+    assert sheet["B3"].value == "保障方案B责任"
+    assert sheet["C2"].value == "10"
+    assert sheet["E2"].value == "30"
+    assert sheet["B2"].style_id == original_sheet["B2"].style_id
+    assert sheet["C2"].style_id == original_sheet["C2"].style_id
+    assert sheet["E2"].style_id == original_sheet["E2"].style_id
 
 
 def test_fill_template_preserves_original_workbook_structure_and_styles(tmp_path):
@@ -221,3 +223,26 @@ def _workbook_template_snapshot(workbook, sheet_names: list[str] | None = None, 
             "cells": cells,
         }
     return snapshot
+
+
+def _write_custom_product_docx(tmp_path: Path) -> Path:
+    spec = tmp_path / "custom_product.docx"
+    document = Document()
+    document.add_paragraph("999001-星河年金保险（分红型）")
+    document.add_paragraph("产品类型：年金保险")
+    document.add_paragraph("保障方案：保障方案A、保障方案B")
+    table = document.add_table(rows=3, cols=4)
+    table.cell(0, 0).text = "缴费期间*"
+    table.cell(0, 1).text = "3-Y-年"
+    table.cell(0, 2).text = "5-Y-年"
+    table.cell(0, 3).text = "10-Y-年"
+    table.cell(1, 0).text = "保险期间*"
+    table.cell(1, 1).text = "至25岁"
+    table.cell(1, 2).text = "至30岁"
+    table.cell(1, 3).text = "30-Y-年"
+    table.cell(2, 0).text = "给付责任名称*"
+    table.cell(2, 1).text = "成长守护金"
+    table.cell(2, 2).text = "满期保险金"
+    table.cell(2, 3).text = "身故保险金"
+    document.save(spec)
+    return spec

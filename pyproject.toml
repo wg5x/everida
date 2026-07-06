@@ -1,0 +1,33 @@
+[build-system]
+requires = ["setuptools>=69", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "everida"
+version = "0.1.0"
+description = "Agent-first business automation MVP for document and product configuration workflows."
+readme = "docs/PRD.md"
+requires-python = ">=3.12"
+dependencies = [
+    "fastapi>=0.115",
+    "openpyxl>=3.1",
+    "pydantic>=2.7",
+    "python-docx>=1.1",
+    "sqlglot>=25.0",
+    "typer>=0.12",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0",
+]
+
+[project.scripts]
+everida = "everida.cli:app"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+pythonpath = ["src"]
+testpaths = ["tests"]

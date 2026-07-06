@@ -50,8 +50,8 @@ def parse_product(spec: str | Path) -> ProductConfig:
         "short_name": _evidence_for_value(parsed, short_name, short_name, 0.82),
         "product_type": _evidence_for_value(parsed, product_type, product_type, 0.86),
         "bonus_type": _evidence_for_value(parsed, bonus_type, bonus_type, 0.86),
-        "payment_options": _evidence_for_list(parsed, payment_options, 0.72),
-        "insurance_periods": _evidence_for_list(parsed, insurance_periods, 0.72),
+        "payment_options": _evidence_for_list(parsed, payment_options, 0.72, ["缴费期间", "缴费频率", "缴费方式"]),
+        "insurance_periods": _evidence_for_list(parsed, insurance_periods, 0.72, ["保险期间", "保障期间"]),
         "benefit_rules": _evidence_for_list(parsed, benefit_rules, 0.78),
         "underwriting_rules": _evidence_for_list(parsed, underwriting_rules, 0.66),
         "preservation_rules": _evidence_for_list(parsed, preservation_rules, 0.62),
@@ -317,10 +317,15 @@ def _evidence_for_value(parsed: ParsedDocument, value: str, keyword: str, confid
     )
 
 
-def _evidence_for_list(parsed: ParsedDocument, values: list[str], confidence: float) -> FieldEvidence:
+def _evidence_for_list(
+    parsed: ParsedDocument,
+    values: list[str],
+    confidence: float,
+    context_keywords: list[str] | None = None,
+) -> FieldEvidence:
     if not values:
         return FieldEvidence(value=[], source_ref="docx:all", confidence=0.0, evidence_text="")
-    source_ref, evidence_text = _find_evidence(parsed, values)
+    source_ref, evidence_text = _find_evidence(parsed, values, context_keywords or [])
     return FieldEvidence(
         value=values,
         source_ref=source_ref,
@@ -329,8 +334,14 @@ def _evidence_for_list(parsed: ParsedDocument, values: list[str], confidence: fl
     )
 
 
-def _find_evidence(parsed: ParsedDocument, keywords: list[str]) -> tuple[str, str]:
+def _find_evidence(parsed: ParsedDocument, keywords: list[str], context_keywords: list[str] | None = None) -> tuple[str, str]:
     normalized_keywords = [_normalize_text(keyword) for keyword in keywords if keyword]
+    normalized_context = [_normalize_text(keyword) for keyword in context_keywords or [] if keyword]
+
+    if normalized_context:
+        prioritized = _find_contextual_evidence(parsed, keywords, normalized_keywords, context_keywords or [], normalized_context)
+        if prioritized:
+            return prioritized
 
     for keyword, normalized_keyword in zip(keywords, normalized_keywords, strict=False):
         for section in parsed.sections:
@@ -348,6 +359,29 @@ def _find_evidence(parsed: ParsedDocument, keywords: list[str]) -> tuple[str, st
         if normalized_keyword in normalized_markdown:
             return f"{parsed.kind}:markdown", _snippet(parsed.markdown, [keyword])
     return f"{parsed.kind}:all", ""
+
+
+def _find_contextual_evidence(
+    parsed: ParsedDocument,
+    keywords: list[str],
+    normalized_keywords: list[str],
+    context_keywords: list[str],
+    normalized_context: list[str],
+) -> tuple[str, str] | None:
+    for keyword, normalized_keyword in zip(keywords, normalized_keywords, strict=False):
+        for table in parsed.tables:
+            table_text = "\n".join(" | ".join(row) for row in table.rows)
+            normalized_text = _normalize_text(table_text)
+            if normalized_keyword in normalized_text and any(context in normalized_text for context in normalized_context):
+                return table.source_ref, _snippet(table_text, [*context_keywords, keyword], radius=180)
+
+    for keyword, normalized_keyword in zip(keywords, normalized_keywords, strict=False):
+        for section in parsed.sections:
+            section_text = f"{section.title}\n{section.text}"
+            normalized_text = _normalize_text(section_text)
+            if normalized_keyword in normalized_text and any(context in normalized_text for context in normalized_context):
+                return section.source_ref, _snippet(section_text, [keyword])
+    return None
 
 
 def _snippet(text: str, keywords: list[str], radius: int = 90) -> str:
@@ -381,7 +415,9 @@ def _snippet(text: str, keywords: list[str], radius: int = 90) -> str:
 
 
 def _normalize_text(text: str) -> str:
-    return re.sub(r"\s+", "", text)
+    normalized = re.sub(r"\s+", "", text)
+    normalized = re.sub(r"(\d+)-Y-年", r"\1年", normalized)
+    return normalized
 
 
 def _sheet_names(template: str | Path) -> list[str]:

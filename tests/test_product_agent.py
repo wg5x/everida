@@ -49,6 +49,15 @@ def test_parse_product_includes_field_level_evidence():
     assert "成长守护金" in benefit_evidence.evidence_text
 
 
+def test_parse_product_prioritizes_structured_context_for_payment_evidence():
+    product = parse_product(SPEC)
+
+    payment_evidence = product.field_evidence["payment_options"]
+    assert payment_evidence.source_ref.startswith("docx:table:")
+    assert "缴费期间" in payment_evidence.evidence_text or "缴费频率" in payment_evidence.evidence_text
+    assert "3-Y-年" in payment_evidence.evidence_text
+
+
 def test_fill_template_writes_product_summary_sheet(tmp_path):
     product = parse_product(SPEC)
     output = tmp_path / "filled.xlsx"

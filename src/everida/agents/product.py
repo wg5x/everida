@@ -8,7 +8,7 @@ from pathlib import Path
 from openpyxl import Workbook, load_workbook
 
 from everida.agents.document import parse_document
-from everida.schemas import PipelineResult, ProductConfig, ValidationIssue
+from everida.schemas import FieldEvidence, ParsedDocument, PipelineResult, ProductConfig, ValidationIssue
 from everida.tools.sql import inspect_sql
 
 
@@ -31,6 +31,9 @@ def parse_product(spec: str | Path) -> ProductConfig:
 
     risk_code = _first_match(r"\b(120078)\b", text, "120078")
     risk_name = _first_match(r"中邮未来星年金保险（分红型）", text, "中邮未来星年金保险（分红型）")
+    short_name = "未来星"
+    product_type = "年金保险" if "年金保险" in compact else ""
+    bonus_type = "分红型" if "分红型" in compact else ""
     payment_options = _unique_found(compact, ["趸交", "3年", "5年", "10年", "年交"])
     payment_options.extend(_periods_from_table_codes(compact, ["3", "5", "10"]))
     payment_options = _dedupe(payment_options)
@@ -38,21 +41,38 @@ def parse_product(spec: str | Path) -> ProductConfig:
     insurance_periods.extend(_age_periods_from_text(compact))
     insurance_periods = _dedupe(insurance_periods)
     benefit_rules = _unique_found(compact, BENEFIT_NAMES)
+    underwriting_rules = _extract_rules(compact, ["投保年龄", "最低保额", "1000元", "性别"])
+    preservation_rules = _extract_rules(compact, ["退保", "减保", "保全", "现金价值"])
+    claim_rules = _extract_rules(compact, ["身故", "理赔", "风险保额"])
+    field_evidence = {
+        "risk_code": _evidence_for_value(parsed, risk_code, risk_code, 0.92),
+        "risk_name": _evidence_for_value(parsed, risk_name, risk_name, 0.9),
+        "short_name": _evidence_for_value(parsed, short_name, short_name, 0.82),
+        "product_type": _evidence_for_value(parsed, product_type, product_type, 0.86),
+        "bonus_type": _evidence_for_value(parsed, bonus_type, bonus_type, 0.86),
+        "payment_options": _evidence_for_list(parsed, payment_options, 0.72),
+        "insurance_periods": _evidence_for_list(parsed, insurance_periods, 0.72),
+        "benefit_rules": _evidence_for_list(parsed, benefit_rules, 0.78),
+        "underwriting_rules": _evidence_for_list(parsed, underwriting_rules, 0.66),
+        "preservation_rules": _evidence_for_list(parsed, preservation_rules, 0.62),
+        "claim_rules": _evidence_for_list(parsed, claim_rules, 0.66),
+    }
 
     return ProductConfig(
         risk_code=risk_code,
         risk_name=risk_name,
-        short_name="未来星",
-        product_type="年金保险" if "年金保险" in compact else "",
-        bonus_type="分红型" if "分红型" in compact else "",
+        short_name=short_name,
+        product_type=product_type,
+        bonus_type=bonus_type,
         payment_options=payment_options,
         insurance_periods=insurance_periods,
         liabilities=benefit_rules,
         benefit_rules=benefit_rules,
-        underwriting_rules=_extract_rules(compact, ["投保年龄", "最低保额", "1000元", "性别"]),
-        preservation_rules=_extract_rules(compact, ["退保", "减保", "保全", "现金价值"]),
-        claim_rules=_extract_rules(compact, ["身故", "理赔", "风险保额"]),
+        underwriting_rules=underwriting_rules,
+        preservation_rules=preservation_rules,
+        claim_rules=claim_rules,
         source_refs=[section.source_ref for section in parsed.sections[:10]],
+        field_evidence=field_evidence,
     )
 
 
@@ -109,6 +129,7 @@ def validate_product(product: ProductConfig, template: str | Path, sql: str | Pa
     )
     if not issue_lines:
         issue_lines = "- 未发现阻断性问题。"
+    evidence_table = _field_evidence_markdown(product)
 
     return f"""# Everida 产品一致性校验报告
 
@@ -129,6 +150,10 @@ def validate_product(product: ProductConfig, template: str | Path, sql: str | Pa
 - SQL 产品编码：{", ".join(inventory.product_codes) or "未识别"}
 - SQL 表数量：{len(inventory.tables)}
 - SQL 语句数量：{len(inventory.statements)}
+
+## 字段证据链
+
+{evidence_table}
 
 ## 人工确认项
 
@@ -280,6 +305,85 @@ def _extract_rules(text: str, keywords: list[str]) -> list[str]:
     return [keyword for keyword in keywords if keyword in text]
 
 
+def _evidence_for_value(parsed: ParsedDocument, value: str, keyword: str, confidence: float) -> FieldEvidence:
+    if not value:
+        return FieldEvidence(value=value, source_ref="docx:all", confidence=0.0, evidence_text="")
+    source_ref, evidence_text = _find_evidence(parsed, [keyword])
+    return FieldEvidence(
+        value=value,
+        source_ref=source_ref,
+        confidence=confidence if evidence_text else 0.45,
+        evidence_text=evidence_text,
+    )
+
+
+def _evidence_for_list(parsed: ParsedDocument, values: list[str], confidence: float) -> FieldEvidence:
+    if not values:
+        return FieldEvidence(value=[], source_ref="docx:all", confidence=0.0, evidence_text="")
+    source_ref, evidence_text = _find_evidence(parsed, values)
+    return FieldEvidence(
+        value=values,
+        source_ref=source_ref,
+        confidence=confidence if evidence_text else 0.45,
+        evidence_text=evidence_text,
+    )
+
+
+def _find_evidence(parsed: ParsedDocument, keywords: list[str]) -> tuple[str, str]:
+    normalized_keywords = [_normalize_text(keyword) for keyword in keywords if keyword]
+
+    for keyword, normalized_keyword in zip(keywords, normalized_keywords, strict=False):
+        for section in parsed.sections:
+            section_text = f"{section.title}\n{section.text}"
+            if keyword in section_text:
+                return section.source_ref, _snippet(section_text, [keyword])
+
+        for table in parsed.tables:
+            table_text = "\n".join(" | ".join(row) for row in table.rows)
+            normalized_text = _normalize_text(table_text)
+            if normalized_keyword in normalized_text:
+                return table.source_ref, _snippet(table_text, [keyword])
+
+        normalized_markdown = _normalize_text(parsed.markdown)
+        if normalized_keyword in normalized_markdown:
+            return f"{parsed.kind}:markdown", _snippet(parsed.markdown, [keyword])
+    return f"{parsed.kind}:all", ""
+
+
+def _snippet(text: str, keywords: list[str], radius: int = 90) -> str:
+    best_keyword = ""
+    for keyword in keywords:
+        index = text.find(keyword)
+        if index != -1:
+            best_keyword = keyword
+            start = max(index - radius, 0)
+            end = min(index + len(keyword) + radius, len(text))
+            return re.sub(r"\s+", " ", text[start:end]).strip()
+
+    normalized_text = _normalize_text(text)
+    best_index = -1
+    for keyword in keywords:
+        normalized_keyword = _normalize_text(keyword)
+        index = normalized_text.find(normalized_keyword)
+        if index != -1:
+            best_index = index
+            break
+    if best_index == -1:
+        return text.strip()[: radius * 2]
+
+    plain = re.sub(r"\s+", " ", text).strip()
+    plain_index = plain.find(best_keyword)
+    if plain_index == -1:
+        plain_index = min(best_index, max(len(plain) - 1, 0))
+    start = max(plain_index - radius, 0)
+    end = min(plain_index + len(best_keyword) + radius, len(plain))
+    return plain[start:end]
+
+
+def _normalize_text(text: str) -> str:
+    return re.sub(r"\s+", "", text)
+
+
 def _sheet_names(template: str | Path) -> list[str]:
     workbook = load_workbook(template, read_only=True, data_only=True)
     return list(workbook.sheetnames)
@@ -287,3 +391,38 @@ def _sheet_names(template: str | Path) -> list[str]:
 
 def _escape_sql(value: str) -> str:
     return value.replace("'", "''")
+
+
+def _field_evidence_markdown(product: ProductConfig) -> str:
+    fields = [
+        ("risk_code", "产品编码"),
+        ("risk_name", "产品名称"),
+        ("payment_options", "缴费期间/方式"),
+        ("insurance_periods", "保险期间"),
+        ("benefit_rules", "给付责任"),
+    ]
+    rows = ["| 字段 | 值 | 来源 | 置信度 | 证据 |", "| --- | --- | --- | --- | --- |"]
+    for field_name, label in fields:
+        evidence = product.field_evidence.get(field_name)
+        if not evidence:
+            rows.append(f"| {label} |  |  | 0.00 |  |")
+            continue
+        value = "、".join(evidence.value) if isinstance(evidence.value, list) else str(evidence.value)
+        rows.append(
+            "| "
+            + " | ".join(
+                [
+                    label,
+                    _markdown_cell(value),
+                    evidence.source_ref,
+                    f"{evidence.confidence:.2f}",
+                    _markdown_cell(evidence.evidence_text[:120]),
+                ]
+            )
+            + " |"
+        )
+    return "\n".join(rows)
+
+
+def _markdown_cell(value: str) -> str:
+    return value.replace("|", "\\|").replace("\n", " ")

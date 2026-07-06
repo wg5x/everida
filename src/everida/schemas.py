@@ -47,6 +47,13 @@ class SqlInventory(BaseModel):
     statements: list[SqlStatement]
 
 
+class FieldEvidence(BaseModel):
+    value: Any
+    source_ref: str
+    confidence: float
+    evidence_text: str
+
+
 class ProductConfig(BaseModel):
     risk_code: str
     risk_name: str
@@ -61,6 +68,7 @@ class ProductConfig(BaseModel):
     preservation_rules: list[str] = Field(default_factory=list)
     claim_rules: list[str] = Field(default_factory=list)
     source_refs: list[str] = Field(default_factory=list)
+    field_evidence: dict[str, FieldEvidence] = Field(default_factory=dict)
     confidence: float = 0.72
 
 

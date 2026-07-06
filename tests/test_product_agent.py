@@ -31,6 +31,24 @@ def test_parse_product_extracts_core_120078_fields():
     assert "成长守护金" in product.benefit_rules
 
 
+def test_parse_product_includes_field_level_evidence():
+    product = parse_product(SPEC)
+
+    risk_code_evidence = product.field_evidence["risk_code"]
+    assert risk_code_evidence.value == "120078"
+    assert risk_code_evidence.source_ref.startswith("docx:")
+    assert risk_code_evidence.confidence >= 0.8
+    assert "120078" in risk_code_evidence.evidence_text
+
+    payment_evidence = product.field_evidence["payment_options"]
+    assert "3年" in payment_evidence.value
+    assert payment_evidence.confidence >= 0.6
+
+    benefit_evidence = product.field_evidence["benefit_rules"]
+    assert "成长守护金" in benefit_evidence.value
+    assert "成长守护金" in benefit_evidence.evidence_text
+
+
 def test_fill_template_writes_product_summary_sheet(tmp_path):
     product = parse_product(SPEC)
     output = tmp_path / "filled.xlsx"
@@ -59,6 +77,7 @@ def test_validate_product_outputs_markdown_report():
 
     assert "# Everida 产品一致性校验报告" in report
     assert "120078" in report
+    assert "字段证据链" in report
     assert "人工确认项" in report
 
 
@@ -82,4 +101,5 @@ def test_run_product_pipeline_writes_all_mvp_artifacts(tmp_path):
     product = json.loads((tmp_path / "product.json").read_text(encoding="utf-8"))
     manifest = json.loads((tmp_path / "run_manifest.json").read_text(encoding="utf-8"))
     assert product["risk_code"] == "120078"
+    assert product["field_evidence"]["risk_code"]["value"] == "120078"
     assert manifest["status"] == "completed"

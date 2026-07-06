@@ -60,6 +60,7 @@ class ProductConfig(BaseModel):
     short_name: str
     product_type: str
     bonus_type: str
+    coverage_schemes: list[str] = Field(default_factory=list)
     payment_options: list[str] = Field(default_factory=list)
     insurance_periods: list[str] = Field(default_factory=list)
     liabilities: list[str] = Field(default_factory=list)

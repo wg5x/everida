@@ -1,6 +1,7 @@
 import json
 from pathlib import Path
 
+from docx import Document
 from openpyxl import load_workbook
 
 from everida.agents.product import (
@@ -23,12 +24,44 @@ def test_parse_product_extracts_core_120078_fields():
 
     assert product.risk_code == "120078"
     assert "未来星" in product.risk_name
+    assert "保障方案一" in product.coverage_schemes
+    assert "保障方案二" in product.coverage_schemes
     assert product.product_type == "年金保险"
     assert "分红型" == product.bonus_type
     assert "趸交" in product.payment_options
     assert "3年" in product.payment_options
     assert "至25岁" in product.insurance_periods
     assert "成长守护金" in product.benefit_rules
+
+
+def test_parse_product_extracts_code_and_name_without_120078_hardcoding(tmp_path):
+    spec = tmp_path / "custom_product.docx"
+    document = Document()
+    document.add_paragraph("999001-星河年金保险（分红型）")
+    document.add_paragraph("产品类型：年金保险")
+    document.add_paragraph("保障方案：保障方案A、保障方案B")
+    table = document.add_table(rows=3, cols=4)
+    table.cell(0, 0).text = "缴费期间*"
+    table.cell(0, 1).text = "3-Y-年"
+    table.cell(0, 2).text = "5-Y-年"
+    table.cell(0, 3).text = "10-Y-年"
+    table.cell(1, 0).text = "保险期间*"
+    table.cell(1, 1).text = "至25岁"
+    table.cell(1, 2).text = "至30岁"
+    table.cell(1, 3).text = "30-Y-年"
+    table.cell(2, 0).text = "给付责任名称*"
+    table.cell(2, 1).text = "成长守护金"
+    table.cell(2, 2).text = "满期保险金"
+    table.cell(2, 3).text = "身故保险金"
+    document.save(spec)
+
+    product = parse_product(spec)
+
+    assert product.risk_code == "999001"
+    assert product.risk_name == "星河年金保险（分红型）"
+    assert product.short_name == "星河"
+    assert product.coverage_schemes == ["保障方案A", "保障方案B"]
+    assert "120078" not in product.model_dump_json()
 
 
 def test_parse_product_includes_field_level_evidence():
@@ -69,6 +102,7 @@ def test_fill_template_writes_product_summary_sheet(tmp_path):
     sheet = workbook["Everida产品摘要"]
     assert sheet["A1"].value == "字段"
     assert sheet["B2"].value == "120078"
+    assert "coverage_schemes" in [row[0].value for row in sheet.iter_rows()]
 
 
 def test_generate_sql_contains_draft_guard_and_core_fields():
@@ -86,6 +120,7 @@ def test_validate_product_outputs_markdown_report():
 
     assert "# Everida 产品一致性校验报告" in report
     assert "120078" in report
+    assert "| 保障方案 |" in report
     assert "字段证据链" in report
     assert "人工确认项" in report
 

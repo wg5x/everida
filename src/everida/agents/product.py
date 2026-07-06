@@ -3,9 +3,10 @@ from __future__ import annotations
 import json
 import re
 import shutil
+from dataclasses import dataclass
 from pathlib import Path
 
-from openpyxl import Workbook, load_workbook
+from openpyxl import load_workbook
 
 from everida.agents.document import parse_document
 from everida.schemas import FieldEvidence, ParsedDocument, PipelineResult, ProductConfig, ValidationIssue
@@ -24,16 +25,33 @@ BENEFIT_NAMES = [
 ]
 
 
+@dataclass(frozen=True)
+class ProductIdentity:
+    risk_code: str
+    risk_name: str
+
+
+PRODUCT_IDENTITY_RE = re.compile(
+    r"(?P<code>\b\d{6}\b)\s*[-－]\s*(?P<name>[\u4e00-\u9fffA-Za-z0-9]+?保险(?:（[^）]+）)?)"
+)
+
+PRODUCT_NAME_RE = re.compile(r"([\u4e00-\u9fffA-Za-z0-9]+?保险(?:（[^）]+）)?)")
+PRODUCT_TYPE_CANDIDATES = ["年金保险", "终身寿险", "两全保险", "健康保险", "意外伤害保险", "重大疾病保险"]
+BONUS_TYPE_CANDIDATES = ["分红型", "万能型", "投资连结型"]
+
+
 def parse_product(spec: str | Path) -> ProductConfig:
     parsed = parse_document(spec)
     text = parsed.markdown
     compact = re.sub(r"\s+", "", text)
 
-    risk_code = _first_match(r"\b(120078)\b", text, "120078")
-    risk_name = _first_match(r"中邮未来星年金保险（分红型）", text, "中邮未来星年金保险（分红型）")
-    short_name = "未来星"
-    product_type = "年金保险" if "年金保险" in compact else ""
-    bonus_type = "分红型" if "分红型" in compact else ""
+    identity = _extract_identity(text)
+    risk_code = identity.risk_code
+    risk_name = identity.risk_name
+    short_name = _derive_short_name(risk_name)
+    product_type = _first_candidate(compact, PRODUCT_TYPE_CANDIDATES)
+    bonus_type = _first_candidate(compact, BONUS_TYPE_CANDIDATES)
+    coverage_schemes = _extract_coverage_schemes(text)
     payment_options = _unique_found(compact, ["趸交", "3年", "5年", "10年", "年交"])
     payment_options.extend(_periods_from_table_codes(compact, ["3", "5", "10"]))
     payment_options = _dedupe(payment_options)
@@ -50,6 +68,7 @@ def parse_product(spec: str | Path) -> ProductConfig:
         "short_name": _evidence_for_value(parsed, short_name, short_name, 0.82),
         "product_type": _evidence_for_value(parsed, product_type, product_type, 0.86),
         "bonus_type": _evidence_for_value(parsed, bonus_type, bonus_type, 0.86),
+        "coverage_schemes": _evidence_for_list(parsed, coverage_schemes, 0.74, ["保障方案"]),
         "payment_options": _evidence_for_list(parsed, payment_options, 0.72, ["缴费期间", "缴费频率", "缴费方式"]),
         "insurance_periods": _evidence_for_list(parsed, insurance_periods, 0.72, ["保险期间", "保障期间"]),
         "benefit_rules": _evidence_for_list(parsed, benefit_rules, 0.78),
@@ -64,6 +83,7 @@ def parse_product(spec: str | Path) -> ProductConfig:
         short_name=short_name,
         product_type=product_type,
         bonus_type=bonus_type,
+        coverage_schemes=coverage_schemes,
         payment_options=payment_options,
         insurance_periods=insurance_periods,
         liabilities=benefit_rules,
@@ -92,6 +112,7 @@ def fill_template(product: ProductConfig, template: str | Path, out: str | Path)
         ("short_name", product.short_name),
         ("product_type", product.product_type),
         ("bonus_type", product.bonus_type),
+        ("coverage_schemes", "、".join(product.coverage_schemes)),
         ("payment_options", "、".join(product.payment_options)),
         ("insurance_periods", "、".join(product.insurance_periods)),
         ("benefit_rules", "、".join(product.benefit_rules)),
@@ -270,6 +291,47 @@ def load_product_json(path: str | Path) -> ProductConfig:
     return ProductConfig.model_validate_json(Path(path).read_text(encoding="utf-8"))
 
 
+def _extract_identity(text: str) -> ProductIdentity:
+    match = PRODUCT_IDENTITY_RE.search(text)
+    if match:
+        return ProductIdentity(
+            risk_code=match.group("code"),
+            risk_name=match.group("name").strip(),
+        )
+
+    code = _first_match(r"\b([1-9]\d{5})\b", text, "")
+    name_match = PRODUCT_NAME_RE.search(text)
+    return ProductIdentity(
+        risk_code=code,
+        risk_name=name_match.group(1).strip() if name_match else "",
+    )
+
+
+def _derive_short_name(risk_name: str) -> str:
+    if not risk_name:
+        return ""
+    name = re.sub(r"（[^）]+）", "", risk_name)
+    for suffix in PRODUCT_TYPE_CANDIDATES:
+        name = name.replace(suffix, "")
+    for prefix in ("中邮", "中国人寿", "中国平安", "太平洋", "新华", "泰康"):
+        if name.startswith(prefix) and len(name) > len(prefix) + 1:
+            name = name[len(prefix) :]
+    return name
+
+
+def _first_candidate(text: str, candidates: list[str]) -> str:
+    for candidate in candidates:
+        if candidate in text:
+            return candidate
+    return ""
+
+
+def _extract_coverage_schemes(text: str) -> list[str]:
+    compact = _normalize_text(text)
+    schemes = re.findall(r"保障方案[一二三四五六七八九十A-Za-z0-9]+", compact)
+    return _dedupe(schemes)
+
+
 def _first_match(pattern: str, text: str, default: str) -> str:
     match = re.search(pattern, text)
     return match.group(1) if match and match.groups() else (match.group(0) if match else default)
@@ -433,6 +495,7 @@ def _field_evidence_markdown(product: ProductConfig) -> str:
     fields = [
         ("risk_code", "产品编码"),
         ("risk_name", "产品名称"),
+        ("coverage_schemes", "保障方案"),
         ("payment_options", "缴费期间/方式"),
         ("insurance_periods", "保险期间"),
         ("benefit_rules", "给付责任"),

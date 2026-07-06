@@ -50,8 +50,13 @@ def _extract_tables(statement_text: str) -> list[str]:
     try:
         parsed = sqlglot.parse_one(statement_text)
     except Exception:
-        return sorted(set(re.findall(r"(?:from|into|update|join|table)\s+([a-zA-Z0-9_.$]+)", statement_text, re.I)))
-    return sorted({table.name for table in parsed.find_all(exp.Table) if table.name})
+        raw_tables = re.findall(r"(?:from|into|update|join|table)\s+([a-zA-Z0-9_.$]+)", statement_text, re.I)
+        return sorted({_normalize_table_name(table) for table in raw_tables if _normalize_table_name(table)})
+    return sorted({_normalize_table_name(table.name) for table in parsed.find_all(exp.Table) if table.name})
+
+
+def _normalize_table_name(table_name: str) -> str:
+    return table_name.rsplit(".", maxsplit=1)[-1].strip("`\"[]").upper()
 
 
 def _extract_product_codes(sql_text: str, path: Path) -> list[str]:

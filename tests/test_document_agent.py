@@ -35,4 +35,7 @@ def test_inspect_sql_outputs_tables_statements_and_product_code():
     assert inventory.product_codes == ["120078"]
     assert inventory.statements
     assert inventory.tables
+    assert len(inventory.tables) == 38
+    assert "LMRISKTORISK" in inventory.tables
+    assert all(table == table.upper() for table in inventory.tables)
     assert all(statement.source_ref.startswith("sql:statement:") for statement in inventory.statements)

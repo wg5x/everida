@@ -142,6 +142,23 @@ def test_fill_template_maps_benefit_rules_into_original_sheet(tmp_path):
     assert sheet["C4"].style_id == original_sheet["C4"].style_id
 
 
+def test_fill_template_maps_payment_plan_names_into_original_sheet(tmp_path):
+    spec = _write_custom_product_docx(tmp_path)
+    product = parse_product(spec)
+    output = tmp_path / "filled.xlsx"
+
+    fill_template(product, TEMPLATE, output)
+
+    workbook = load_workbook(output)
+    original = load_workbook(TEMPLATE)
+    sheet = workbook["缴费计划"]
+    original_sheet = original["缴费计划"]
+    assert sheet["B2"].value == "保障方案A责任缴费"
+    assert sheet["B3"].value == "保障方案B责任缴费"
+    assert sheet["B2"].style_id == original_sheet["B2"].style_id
+    assert sheet["B3"].style_id == original_sheet["B3"].style_id
+
+
 def test_fill_template_preserves_original_workbook_structure_and_styles(tmp_path):
     product = parse_product(SPEC)
     output = tmp_path / "filled.xlsx"
@@ -149,7 +166,11 @@ def test_fill_template_preserves_original_workbook_structure_and_styles(tmp_path
     original_sheet_names = list(original.sheetnames)
     original_snapshot = _workbook_template_snapshot(
         original,
-        ignored_cells={"产品基础信息": {"D2", "D3", "D4"}, "给付责任": {f"C{row}" for row in range(2, 10)}},
+        ignored_cells={
+            "产品基础信息": {"D2", "D3", "D4"},
+            "给付责任": {f"C{row}" for row in range(2, 10)},
+            "缴费计划": {"B2", "B3"},
+        },
     )
 
     fill_template(product, TEMPLATE, output)
@@ -160,7 +181,11 @@ def test_fill_template_preserves_original_workbook_structure_and_styles(tmp_path
     assert _workbook_template_snapshot(
         filled,
         original_sheet_names,
-        ignored_cells={"产品基础信息": {"D2", "D3", "D4"}, "给付责任": {f"C{row}" for row in range(2, 10)}},
+        ignored_cells={
+            "产品基础信息": {"D2", "D3", "D4"},
+            "给付责任": {f"C{row}" for row in range(2, 10)},
+            "缴费计划": {"B2", "B3"},
+        },
     ) == original_snapshot
 
 

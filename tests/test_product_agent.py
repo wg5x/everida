@@ -11,12 +11,53 @@ from everida.agents.product import (
     run_product_pipeline,
     validate_product,
 )
+from everida.tools.sql import inspect_sql
 
 
 ROOT = Path(__file__).resolve().parents[1]
 SPEC = ROOT / "raw" / "【已评审需规】120078-未来星年金保险（分红.docx"
 TEMPLATE = ROOT / "raw" / "产品配置模板.xlsx"
 SQL = ROOT / "raw" / "120078_N_1_1.sql"
+EXPECTED_MVP_SQL_TABLES = {
+    "LMRISKAPP",
+    "LMRISKENTRYITEM",
+    "LMRISKTORISKTYPE",
+    "LMEDORCAL",
+    "LFRISK",
+    "LMRISKPARAMSDEF",
+    "LDAUTOAPPROVECONFIG",
+    "LAWAGECALELEMENT",
+    "EBSPROTOPROCATALOGDETAIL",
+    "LMRISKEDORRULE",
+    "LMRISKBASEPARA",
+    "LMRISKROLE",
+    "LMRISKPAY",
+    "LMRISKBASEPARARELA",
+    "LMRISKDUTY",
+    "LMCALMODE",
+    "LMRISKEDORITEM",
+    "LMEDORWT",
+    "LMEDORZT",
+    "LMEDORZT1",
+    "LMEDORZTDUTY",
+    "LMRISKAMNT",
+    "LMRISK",
+    "LMRISKAMNTRULE",
+    "LMDUTY",
+    "LMDUTYCTRL",
+    "LMDUTYPAYRELA",
+    "LMDUTYGETRELA",
+    "LMDUTYPAY",
+    "LMDUTYGET",
+    "LMDUTYGETCLM",
+    "LMDUTYGETALIVE",
+    "LMRISKAPPDB",
+    "LMRISKCOMCTRL",
+    "LMLOAN",
+    "LMRISKSORT",
+    "LMRISKEDORSERVICE",
+    "LMRISKTORISK",
+}
 
 
 def test_parse_product_extracts_core_120078_fields():
@@ -196,6 +237,17 @@ def test_generate_sql_contains_draft_guard_and_core_fields():
     assert "Everida generated draft SQL" in sql
     assert "120078" in sql
     assert "成长守护金" in sql
+
+
+def test_generate_sql_covers_all_mvp_sql_table_classes(tmp_path):
+    product = parse_product(SPEC)
+    output = tmp_path / "generated.sql"
+    output.write_text(generate_sql(product), encoding="utf-8")
+
+    inventory = inspect_sql(output)
+
+    assert set(inventory.tables) == EXPECTED_MVP_SQL_TABLES
+    assert len(inventory.tables) == 38
 
 
 def test_validate_product_outputs_markdown_report():

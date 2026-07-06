@@ -38,6 +38,46 @@ PRODUCT_IDENTITY_RE = re.compile(
 PRODUCT_NAME_RE = re.compile(r"([\u4e00-\u9fffA-Za-z0-9]+?保险(?:（[^）]+）)?)")
 PRODUCT_TYPE_CANDIDATES = ["年金保险", "终身寿险", "两全保险", "健康保险", "意外伤害保险", "重大疾病保险"]
 BONUS_TYPE_CANDIDATES = ["分红型", "万能型", "投资连结型"]
+MVP_SQL_TABLES = [
+    "LMRISKAPP",
+    "LMRISKENTRYITEM",
+    "LMRISKTORISKTYPE",
+    "LMEDORCAL",
+    "LFRISK",
+    "LMRISKPARAMSDEF",
+    "LDAUTOAPPROVECONFIG",
+    "LAWAGECALELEMENT",
+    "EBSPROTOPROCATALOGDETAIL",
+    "LMRISKEDORRULE",
+    "LMRISKBASEPARA",
+    "LMRISKROLE",
+    "LMRISKPAY",
+    "LMRISKBASEPARARELA",
+    "LMRISKDUTY",
+    "LMCALMODE",
+    "LMRISKEDORITEM",
+    "LMEDORWT",
+    "LMEDORZT",
+    "LMEDORZT1",
+    "LMEDORZTDUTY",
+    "LMRISKAMNT",
+    "LMRISK",
+    "LMRISKAMNTRULE",
+    "LMDUTY",
+    "LMDUTYCTRL",
+    "LMDUTYPAYRELA",
+    "LMDUTYGETRELA",
+    "LMDUTYPAY",
+    "LMDUTYGET",
+    "LMDUTYGETCLM",
+    "LMDUTYGETALIVE",
+    "LMRISKAPPDB",
+    "LMRISKCOMCTRL",
+    "LMLOAN",
+    "LMRISKSORT",
+    "LMRISKEDORSERVICE",
+    "LMRISKTORISK",
+]
 
 
 def parse_product(spec: str | Path) -> ProductConfig:
@@ -183,19 +223,38 @@ def _fill_payment_plans(workbook, product: ProductConfig) -> None:
         sheet.cell(row=index, column=2).value = f"{scheme}责任缴费"
 
 
-def generate_sql(product: ProductConfig) -> str:
-    benefit_values = ",\n".join(
-        f"('{product.risk_code}', '{_escape_sql(name)}', 'DRAFT')" for name in product.benefit_rules
+def generate_sql(product: ProductConfig, table_names: list[str] | None = None) -> str:
+    tables = _draft_table_names(table_names)
+    payload = json.dumps(
+        {
+            "risk_code": product.risk_code,
+            "risk_name": product.risk_name,
+            "short_name": product.short_name,
+            "product_type": product.product_type,
+            "bonus_type": product.bonus_type,
+            "coverage_schemes": product.coverage_schemes,
+            "payment_options": product.payment_options,
+            "insurance_periods": product.insurance_periods,
+            "benefit_rules": product.benefit_rules,
+        },
+        ensure_ascii=False,
+        separators=(",", ":"),
     )
+    statements = [
+        (
+            f"-- {table}: draft placeholder generated from structured product config.\n"
+            f"INSERT INTO {table} (riskcode, riskname, everida_review_status, everida_payload)\n"
+            f"VALUES ('{product.risk_code}', '{_escape_sql(product.risk_name)}', "
+            f"'DRAFT_REVIEW_REQUIRED', '{_escape_sql(payload)}');"
+        )
+        for table in tables
+    ]
     return f"""-- Everida generated draft SQL. Human review required before execution.
 -- Product: {product.risk_code} {product.risk_name}
+-- Scope: {len(tables)} product factory table classes.
+-- Note: column mappings are placeholders and must be reviewed before adapting to production DDL.
 
-INSERT INTO everida_product_draft (risk_code, risk_name, short_name, product_type, bonus_type)
-VALUES ('{product.risk_code}', '{_escape_sql(product.risk_name)}', '{_escape_sql(product.short_name)}', '{_escape_sql(product.product_type)}', '{_escape_sql(product.bonus_type)}');
-
-INSERT INTO everida_product_benefit_draft (risk_code, benefit_name, status)
-VALUES
-{benefit_values};
+{chr(10).join(statements)}
 """
 
 
@@ -328,7 +387,7 @@ def run_product_pipeline(spec: str | Path, template: str | Path, sql: str | Path
     artifacts["parsed_document_markdown"].write_text(parsed.markdown, encoding="utf-8")
     artifacts["product_json"].write_text(product.model_dump_json(indent=2), encoding="utf-8")
     fill_template(product, template, artifacts["filled_xlsx"])
-    artifacts["generated_sql"].write_text(generate_sql(product), encoding="utf-8")
+    artifacts["generated_sql"].write_text(generate_sql(product, sql_inventory.tables), encoding="utf-8")
     artifacts["sql_inventory_json"].write_text(sql_inventory.model_dump_json(indent=2), encoding="utf-8")
     artifacts["validate_report_markdown"].write_text(validate_product(product, template, sql), encoding="utf-8")
 
@@ -402,6 +461,11 @@ def _unique_found(text: str, candidates: list[str]) -> list[str]:
 
 def _dedupe(values: list[str]) -> list[str]:
     return list(dict.fromkeys(values))
+
+
+def _draft_table_names(table_names: list[str] | None = None) -> list[str]:
+    source = table_names or MVP_SQL_TABLES
+    return _dedupe([table.upper() for table in source])
 
 
 def _periods_from_table_codes(text: str, years: list[str]) -> list[str]:

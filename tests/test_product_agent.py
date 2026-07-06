@@ -105,6 +105,21 @@ def test_fill_template_writes_product_summary_sheet(tmp_path):
     assert "coverage_schemes" in [row[0].value for row in sheet.iter_rows()]
 
 
+def test_fill_template_preserves_original_workbook_structure_and_styles(tmp_path):
+    product = parse_product(SPEC)
+    output = tmp_path / "filled.xlsx"
+    original = load_workbook(TEMPLATE)
+    original_sheet_names = list(original.sheetnames)
+    original_snapshot = _workbook_template_snapshot(original)
+
+    fill_template(product, TEMPLATE, output)
+
+    filled = load_workbook(output)
+    assert filled.sheetnames[: len(original_sheet_names)] == original_sheet_names
+    assert filled.sheetnames[-1] == "Everida产品摘要"
+    assert _workbook_template_snapshot(filled, original_sheet_names) == original_snapshot
+
+
 def test_generate_sql_contains_draft_guard_and_core_fields():
     product = parse_product(SPEC)
     sql = generate_sql(product)
@@ -147,3 +162,38 @@ def test_run_product_pipeline_writes_all_mvp_artifacts(tmp_path):
     assert product["risk_code"] == "120078"
     assert product["field_evidence"]["risk_code"]["value"] == "120078"
     assert manifest["status"] == "completed"
+
+
+def _workbook_template_snapshot(workbook, sheet_names: list[str] | None = None):
+    names = sheet_names or list(workbook.sheetnames)
+    snapshot = {}
+    for sheet_name in names:
+        sheet = workbook[sheet_name]
+        column_widths = {
+            key: dimension.width
+            for key, dimension in sheet.column_dimensions.items()
+            if dimension.width is not None
+        }
+        row_heights = {
+            key: dimension.height
+            for key, dimension in sheet.row_dimensions.items()
+            if dimension.height is not None
+        }
+        cells = {}
+        for row in sheet.iter_rows():
+            for cell in row:
+                if cell.value is not None:
+                    cells[cell.coordinate] = {
+                        "value": cell.value,
+                        "style_id": cell.style_id,
+                        "comment": cell.comment.text if cell.comment else None,
+                    }
+        snapshot[sheet_name] = {
+            "max_row": sheet.max_row,
+            "max_column": sheet.max_column,
+            "merged_ranges": sorted(str(cell_range) for cell_range in sheet.merged_cells.ranges),
+            "column_widths": column_widths,
+            "row_heights": row_heights,
+            "cells": cells,
+        }
+    return snapshot

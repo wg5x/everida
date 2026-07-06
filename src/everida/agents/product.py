@@ -104,7 +104,7 @@ def fill_template(product: ProductConfig, template: str | Path, out: str | Path)
     workbook = load_workbook(output)
     if "Everida产品摘要" in workbook.sheetnames:
         del workbook["Everida产品摘要"]
-    sheet = workbook.create_sheet("Everida产品摘要", 0)
+    sheet = workbook.create_sheet("Everida产品摘要")
     rows = [
         ("字段", "值"),
         ("risk_code", product.risk_code),

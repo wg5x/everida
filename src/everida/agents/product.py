@@ -102,6 +102,7 @@ def fill_template(product: ProductConfig, template: str | Path, out: str | Path)
     shutil.copyfile(template, output)
 
     workbook = load_workbook(output)
+    _fill_product_base_info(workbook, product)
     if "Everida产品摘要" in workbook.sheetnames:
         del workbook["Everida产品摘要"]
     sheet = workbook.create_sheet("Everida产品摘要")
@@ -122,6 +123,23 @@ def fill_template(product: ProductConfig, template: str | Path, out: str | Path)
         sheet.append(row)
     workbook.save(output)
     return output
+
+
+def _fill_product_base_info(workbook, product: ProductConfig) -> None:
+    if "产品基础信息" not in workbook.sheetnames:
+        return
+    sheet = workbook["产品基础信息"]
+    values_by_field = {
+        "riskcode": product.risk_code,
+        "riskname": product.risk_name,
+        "riskshortname": product.short_name,
+    }
+    for row in sheet.iter_rows(min_row=2):
+        field_cell = row[0]
+        if field_cell.value not in values_by_field:
+            continue
+        target_cell = sheet.cell(row=field_cell.row, column=4)
+        target_cell.value = values_by_field[field_cell.value]
 
 
 def generate_sql(product: ProductConfig) -> str:

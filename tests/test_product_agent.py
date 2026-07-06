@@ -105,19 +105,40 @@ def test_fill_template_writes_product_summary_sheet(tmp_path):
     assert "coverage_schemes" in [row[0].value for row in sheet.iter_rows()]
 
 
+def test_fill_template_maps_product_base_info_into_original_sheet(tmp_path):
+    product = parse_product(SPEC)
+    output = tmp_path / "filled.xlsx"
+
+    fill_template(product, TEMPLATE, output)
+
+    workbook = load_workbook(output)
+    sheet = workbook["产品基础信息"]
+    assert sheet["D2"].value == "120078"
+    assert sheet["D3"].value == "中邮未来星年金保险（分红型）"
+    assert sheet["D4"].value == "未来星"
+    assert sheet["D2"].style_id == load_workbook(TEMPLATE)["产品基础信息"]["D2"].style_id
+
+
 def test_fill_template_preserves_original_workbook_structure_and_styles(tmp_path):
     product = parse_product(SPEC)
     output = tmp_path / "filled.xlsx"
     original = load_workbook(TEMPLATE)
     original_sheet_names = list(original.sheetnames)
-    original_snapshot = _workbook_template_snapshot(original)
+    original_snapshot = _workbook_template_snapshot(
+        original,
+        ignored_cells={"产品基础信息": {"D2", "D3", "D4"}},
+    )
 
     fill_template(product, TEMPLATE, output)
 
     filled = load_workbook(output)
     assert filled.sheetnames[: len(original_sheet_names)] == original_sheet_names
     assert filled.sheetnames[-1] == "Everida产品摘要"
-    assert _workbook_template_snapshot(filled, original_sheet_names) == original_snapshot
+    assert _workbook_template_snapshot(
+        filled,
+        original_sheet_names,
+        ignored_cells={"产品基础信息": {"D2", "D3", "D4"}},
+    ) == original_snapshot
 
 
 def test_generate_sql_contains_draft_guard_and_core_fields():
@@ -164,8 +185,9 @@ def test_run_product_pipeline_writes_all_mvp_artifacts(tmp_path):
     assert manifest["status"] == "completed"
 
 
-def _workbook_template_snapshot(workbook, sheet_names: list[str] | None = None):
+def _workbook_template_snapshot(workbook, sheet_names: list[str] | None = None, ignored_cells=None):
     names = sheet_names or list(workbook.sheetnames)
+    ignored_cells = ignored_cells or {}
     snapshot = {}
     for sheet_name in names:
         sheet = workbook[sheet_name]
@@ -182,6 +204,8 @@ def _workbook_template_snapshot(workbook, sheet_names: list[str] | None = None):
         cells = {}
         for row in sheet.iter_rows():
             for cell in row:
+                if cell.coordinate in ignored_cells.get(sheet_name, set()):
+                    continue
                 if cell.value is not None:
                     cells[cell.coordinate] = {
                         "value": cell.value,

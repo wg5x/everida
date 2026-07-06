@@ -101,12 +101,12 @@ MCP Tools 是 Agent 的底层工具层，包括文件读取、文档解析、网
 - 通用文档解析：支持 PDF、扫描 PDF、DOCX、XLSX、图片等输入。
 - 结构化抽取：基于模型和 schema 输出 JSON。
 - 保险产品配置生成：从需求规格书抽取产品、责任、给付、缴费、保全、理赔、投核保规则。
-- 产品配置模板填充：将抽取结果写入 Excel 模板或生成中间 JSON。
-- 产品 SQL 生成：基于结构化配置生成 SQL 草稿。
+- 产品配置模板填充：将抽取结果写入 Excel 模板或生成中间 JSON，`filled.xlsx` 必须保持原模板样式。
+- 产品 SQL 生成：基于结构化配置生成 SQL 草稿，MVP 需要覆盖示例 SQL 中的全部 38 类表。
 - 一致性校验：比对需求文档、配置模板、SQL 文件之间的差异。
 - CLI 命令：提供本地命令行调用。
-- API 接口：提供异步任务接口、产物下载和校验报告查询。
-- MCP 工具：提供文件解析、网页采集、SQL 校验、产物写入等底层能力。
+- API 接口：第一阶段即提供完整异步任务系统，包括任务创建、状态查询、产物下载和错误追踪。
+- MCP 工具接口：定义文件解析、网页采集、SQL 校验、产物写入等底层工具接口；MCP Server 可后续实现。
 
 ### 6.3 MVP 暂不包含
 
@@ -179,7 +179,7 @@ Product Agent 从保险产品需求规格书中抽取：
 
 #### 7.2.2 配置模板填充
 
-系统支持将抽取结果映射到产品配置模板，模板包含：
+系统支持将抽取结果映射到产品配置模板。生成的 `filled.xlsx` 必须保持原 Excel 模板样式，包括 sheet 顺序、列宽、行高、单元格样式、合并单元格、公式、批注和未修改区域内容。模板包含：
 
 - 产品基础信息。
 - 录入项配置。
@@ -192,7 +192,7 @@ Product Agent 从保险产品需求规格书中抽取：
 
 #### 7.2.3 SQL 生成
 
-系统根据确认后的结构化配置生成产品工厂 SQL 草稿，覆盖：
+系统根据确认后的结构化配置生成产品工厂 SQL 草稿。MVP 需要覆盖示例 SQL 中出现的全部 38 类表，并至少按以下业务域组织：
 
 - 产品主数据表。
 - 界面录入项表。
@@ -201,6 +201,7 @@ Product Agent 从保险产品需求规格书中抽取：
 - 保全规则表。
 - 计算规则表。
 - 风险保额与销售控制表。
+- 销售、限额、保费测算、财务、外围系统相关配置表。
 
 #### 7.2.4 一致性校验
 
@@ -230,7 +231,9 @@ MVP 示例产品为 `120078-中邮未来星年金保险（分红型）`：
 - 能从示例 DOCX 中抽取产品基础信息和主要规则。
 - 能基于示例 XLSX 识别模板结构。
 - 能解析示例 SQL 中涉及的核心表和产品编码。
-- 能输出 `product.json`、`filled.xlsx`、`product.sql`、`validate_report.md`。
+- 能输出 `product.json`、`filled.xlsx`、`generated.sql`、`validate_report.md`。
+- `filled.xlsx` 保持原 Excel 模板样式和未修改区域内容。
+- `generated.sql` 覆盖示例 SQL 中出现的全部 38 类表。
 - 能标记缺失字段、不一致字段和人工确认项。
 
 ### 7.3 Knowledge Agent
@@ -301,8 +304,8 @@ everida document chunk input.pdf --strategy heading --out chunks.json
 ```bash
 everida product parse --spec spec.docx --out product.json
 everida product fill-template --input product.json --template template.xlsx --out filled.xlsx
-everida product generate-sql --input product.json --out product.sql
-everida product validate --spec spec.docx --template template.xlsx --sql product.sql --out validate_report.md
+everida product generate-sql --input product.json --out generated.sql
+everida product validate --spec spec.docx --template template.xlsx --sql generated.sql --out validate_report.md
 everida product run --spec spec.docx --template template.xlsx --sql existing.sql --out-dir outputs/
 ```
 
@@ -336,8 +339,10 @@ everida product run --spec spec.docx --template template.xlsx --sql existing.sql
 
 ### 9.3 API 约束
 
-- 大文件任务必须异步执行。
-- API 返回 task id 和 artifact id。
+- 第一阶段提供完整异步任务系统。
+- 所有耗时任务必须异步执行。
+- API 返回 `task_id`、任务状态、进度、错误信息和 artifact id。
+- 支持任务状态查询、失败重试、任务取消和产物下载。
 - 所有接口支持结构化错误码。
 - 不提供生产库 SQL 执行接口。
 
@@ -396,10 +401,12 @@ everida product run --spec spec.docx --template template.xlsx --sql existing.sql
 ### 12.1 MVP 指标
 
 - 示例产品文档可成功解析并输出结构化 JSON。
-- 示例 Excel 模板可被识别并生成填充结果。
-- 示例 SQL 可被解析并输出核心表清单。
+- 示例 Excel 模板可被识别并生成填充结果，且填充文件保持原模板样式。
+- 示例 SQL 可被解析并输出全部 38 类表清单。
+- 生成 SQL 草稿覆盖示例 SQL 中的全部 38 类表。
 - 三方一致性校验报告可指出主要一致项、缺失项和人工确认项。
 - CLI 和 API 均能复用同一套 Agent Core。
+- API 支持完整异步任务生命周期：创建、排队、运行、完成、失败、取消、重试、产物下载。
 
 ### 12.2 质量指标
 
@@ -419,12 +426,17 @@ everida product run --spec spec.docx --template template.xlsx --sql existing.sql
 | API 依赖过重 | 外部平台 API 不稳定或接入成本高 | MVP 不依赖平台 API，优先文件和模型能力 |
 | 采集合规 | 网页采集可能涉及平台限制 | 只采集公开/授权内容，爬虫作为 MCP 工具且不绕风控 |
 
-## 14. 待确认问题
+## 14. 已确认决策与待确认问题
+
+### 14.1 已确认决策
+
+1. API 第一阶段需要完整异步任务系统。
+2. `filled.xlsx` 必须保持原 Excel 模板样式。
+3. SQL 草稿需要覆盖示例 SQL 中出现的全部 38 类表。
+
+### 14.2 待确认问题
 
 1. MVP 是否只聚焦 `Document Agent + Product Agent`？
 2. 模型 API 首选供应商和模型是什么？
 3. PDF 解析是否需要优先支持扫描件 OCR？
-4. `filled.xlsx` 是否需要完全保持原模板样式？
-5. SQL 草稿是否需要覆盖示例 SQL 中全部 38 类表，还是先覆盖核心表？
-6. API 是否需要第一阶段就提供，还是先 CLI 后 API？
-7. MCP Server 是否进入 MVP，还是先定义工具接口后续实现？
+4. MCP Server 是否进入 MVP，还是 MVP 只定义 MCP 工具接口后续实现？

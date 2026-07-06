@@ -27,7 +27,7 @@
 | SQL 风格检查 | SQLFluff | SQL lint 和规范检查 |
 | 网页采集工具 | Crawlee Python / Playwright | 作为 MCP 工具，不作为业务模块 |
 | LLM-ready 采集 | Firecrawl / Crawl4AI | 网页转 Markdown、正文抽取，可作为可选工具 |
-| 任务执行 | 本地 task registry | MVP 先用本地任务表/JSON；后续再接 Prefect/Temporal |
+| 任务执行 | SQLite-backed task registry + worker | MVP 需完整异步任务生命周期；后续再接 Redis/RQ/Celery 或 Prefect/Temporal |
 
 ## 3. Agent Core 选择
 
@@ -160,7 +160,18 @@ MVP 第一闭环是 Document + Product。RAG 作为 Knowledge Agent 的基础能
 
 MVP 不提供生产库执行能力，只生成和校验 SQL 文件。
 
-## 8. 推荐项目结构
+## 8. 异步任务系统
+
+MVP 第一阶段需要完整异步任务系统，但不必一开始引入重型分布式调度。推荐实现：
+
+- `FastAPI` 接收任务并返回 `task_id`。
+- `SQLite` 或本地轻量数据库持久化任务状态、输入参数、错误信息和产物索引。
+- 独立 worker 进程执行 Document/Product Agent。
+- 状态机至少包含 `created`、`queued`、`running`、`completed`、`failed`、`cancelled`、`retrying`。
+- API 支持任务创建、状态查询、取消、重试和产物下载。
+- 后续多用户/分布式场景再迁移到 Redis/RQ/Celery、Prefect 或 Temporal。
+
+## 9. 推荐项目结构
 
 ```text
 everida/
@@ -186,7 +197,7 @@ everida/
 └─ tests/
 ```
 
-## 9. 技术决策
+## 10. 技术决策
 
 | 决策 | 结论 |
 | --- | --- |

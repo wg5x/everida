@@ -1,2 +1,5 @@
 .DS_Store
 outputs/
+*.egg-info/
+__pycache__/
+*.py[cod]

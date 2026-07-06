@@ -40,11 +40,20 @@ class SqlStatement(BaseModel):
     source_ref: str
 
 
+class SqlTableSummary(BaseModel):
+    name: str
+    statement_types: list[str] = Field(default_factory=list)
+    insert_columns: list[str] = Field(default_factory=list)
+    sample_insert_values: dict[str, Any] = Field(default_factory=dict)
+    source_ref: str
+
+
 class SqlInventory(BaseModel):
     path: str
     product_codes: list[str]
     tables: list[str]
     statements: list[SqlStatement]
+    table_summaries: list[SqlTableSummary] = Field(default_factory=list)
 
 
 class FieldEvidence(BaseModel):

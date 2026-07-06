@@ -39,3 +39,13 @@ def test_inspect_sql_outputs_tables_statements_and_product_code():
     assert "LMRISKTORISK" in inventory.tables
     assert all(table == table.upper() for table in inventory.tables)
     assert all(statement.source_ref.startswith("sql:statement:") for statement in inventory.statements)
+
+    risk_summary = next(summary for summary in inventory.table_summaries if summary.name == "LMRISK")
+    assert risk_summary.statement_types == ["DELETE", "INSERT"]
+    assert risk_summary.insert_columns[:4] == ["riskcode", "riskver", "riskname", "riskshortname"]
+    assert risk_summary.sample_insert_values["riskcode"] == "120078"
+    assert risk_summary.sample_insert_values["riskname"] == "中邮未来星年金保险（分红型）"
+
+    duty_pay_summary = next(summary for summary in inventory.table_summaries if summary.name == "LMDUTYPAY")
+    assert "payplancode" in duty_pay_summary.insert_columns
+    assert duty_pay_summary.sample_insert_values["payplanname"] == "中邮未来星年金保险(分红型)保障方案一责任缴费"

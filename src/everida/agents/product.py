@@ -78,6 +78,7 @@ MVP_SQL_TABLES = [
     "LMRISKEDORSERVICE",
     "LMRISKTORISK",
 ]
+REQUIRED_TEMPLATE_SHEETS = ["产品基础信息", "责任定义", "给付责任", "缴费计划", "计算规则"]
 
 
 def parse_product(spec: str | Path) -> ProductConfig:
@@ -261,7 +262,18 @@ def generate_sql(product: ProductConfig, table_names: list[str] | None = None) -
 def validate_product(product: ProductConfig, template: str | Path, sql: str | Path) -> str:
     workbook = load_workbook(template, read_only=True, data_only=True)
     inventory = inspect_sql(sql)
-    issues = collect_validation_issues(product, list(workbook.sheetnames), inventory.product_codes, inventory.tables)
+    sheet_names = list(workbook.sheetnames)
+    sql_text = Path(sql).read_text(encoding="utf-8", errors="ignore")
+    missing_template_sheets = _missing_template_sheets(sheet_names)
+    missing_sql_tables = _missing_sql_tables(inventory.tables)
+    missing_sql_benefits = _missing_sql_benefits(product, sql_text)
+    issues = collect_validation_issues(
+        product,
+        sheet_names,
+        inventory.product_codes,
+        inventory.tables,
+        sql_text=sql_text,
+    )
     issue_lines = "\n".join(
         f"- **{issue.severity} / {issue.category}**：{issue.message} 建议：{issue.suggestion}"
         for issue in issues
@@ -290,6 +302,12 @@ def validate_product(product: ProductConfig, template: str | Path, sql: str | Pa
 - SQL 表数量：{len(inventory.tables)}
 - SQL 语句数量：{len(inventory.statements)}
 
+## 核心覆盖检查
+
+- 模板核心 Sheet 覆盖：{len(REQUIRED_TEMPLATE_SHEETS) - len(missing_template_sheets)} / {len(REQUIRED_TEMPLATE_SHEETS)}
+- SQL 表类覆盖：{len(MVP_SQL_TABLES) - len(missing_sql_tables)} / {len(MVP_SQL_TABLES)}
+- SQL 给付责任覆盖：{len(product.benefit_rules) - len(missing_sql_benefits)} / {len(product.benefit_rules)}
+
 ## 字段证据链
 
 {evidence_table}
@@ -305,6 +323,7 @@ def collect_validation_issues(
     sheet_names: list[str],
     sql_product_codes: list[str],
     sql_tables: list[str],
+    sql_text: str = "",
 ) -> list[ValidationIssue]:
     issues: list[ValidationIssue] = []
     if product.risk_code not in sql_product_codes:
@@ -331,6 +350,19 @@ def collect_validation_issues(
                 suggestion="请检查模板文件是否损坏。",
             )
         )
+    missing_template_sheets = _missing_template_sheets(sheet_names)
+    if missing_template_sheets:
+        issues.append(
+            ValidationIssue(
+                severity="warning",
+                category="template_core_sheets_missing",
+                message=f"配置模板缺少核心 Sheet：{', '.join(missing_template_sheets)}",
+                source="template_xlsx",
+                target="filled_xlsx",
+                source_ref="xlsx:workbook",
+                suggestion="请确认模板版本是否包含 MVP 核心配置页。",
+            )
+        )
     if not sql_tables:
         issues.append(
             ValidationIssue(
@@ -341,6 +373,32 @@ def collect_validation_issues(
                 target="validate_report",
                 source_ref="sql:all",
                 suggestion="请人工确认 SQL 方言或脚本结构。",
+            )
+        )
+    missing_sql_tables = _missing_sql_tables(sql_tables)
+    if missing_sql_tables:
+        issues.append(
+            ValidationIssue(
+                severity="warning",
+                category="sql_table_classes_missing",
+                message=f"SQL 缺少 MVP 表类：{', '.join(missing_sql_tables)}",
+                source="product_sql",
+                target="validate_report",
+                source_ref="sql:tables",
+                suggestion="请补充对应表类草稿或确认该产品无需配置。",
+            )
+        )
+    missing_sql_benefits = _missing_sql_benefits(product, sql_text)
+    if missing_sql_benefits:
+        issues.append(
+            ValidationIssue(
+                severity="warning",
+                category="sql_benefit_rules_missing",
+                message=f"SQL 中未发现给付责任：{', '.join(missing_sql_benefits)}",
+                source="product_json",
+                target="product_sql",
+                source_ref="product.benefit_rules",
+                suggestion="请确认 SQL 给付责任配置是否遗漏。",
             )
         )
     if product.confidence < 0.85:
@@ -365,11 +423,13 @@ def run_product_pipeline(spec: str | Path, template: str | Path, sql: str | Path
     parsed = parse_document(spec)
     product = parse_product(spec)
     sql_inventory = inspect_sql(sql)
+    sql_text = Path(sql).read_text(encoding="utf-8", errors="ignore")
     issues = collect_validation_issues(
         product,
         _sheet_names(template),
         sql_inventory.product_codes,
         sql_inventory.tables,
+        sql_text=sql_text,
     )
 
     artifacts = {
@@ -466,6 +526,21 @@ def _dedupe(values: list[str]) -> list[str]:
 def _draft_table_names(table_names: list[str] | None = None) -> list[str]:
     source = table_names or MVP_SQL_TABLES
     return _dedupe([table.upper() for table in source])
+
+
+def _missing_template_sheets(sheet_names: list[str]) -> list[str]:
+    return [sheet for sheet in REQUIRED_TEMPLATE_SHEETS if sheet not in sheet_names]
+
+
+def _missing_sql_tables(sql_tables: list[str]) -> list[str]:
+    present = {table.upper() for table in sql_tables}
+    return [table for table in MVP_SQL_TABLES if table not in present]
+
+
+def _missing_sql_benefits(product: ProductConfig, sql_text: str) -> list[str]:
+    if not sql_text:
+        return []
+    return [benefit for benefit in product.benefit_rules if benefit not in sql_text]
 
 
 def _periods_from_table_codes(text: str, years: list[str]) -> list[str]:

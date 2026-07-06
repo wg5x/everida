@@ -258,6 +258,10 @@ def test_validate_product_outputs_markdown_report():
     assert "120078" in report
     assert "| 保障方案 |" in report
     assert "字段证据链" in report
+    assert "核心覆盖检查" in report
+    assert "模板核心 Sheet 覆盖：5 / 5" in report
+    assert "SQL 表类覆盖：38 / 38" in report
+    assert "SQL 给付责任覆盖：8 / 8" in report
     assert "人工确认项" in report
 
 

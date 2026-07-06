@@ -104,6 +104,7 @@ def fill_template(product: ProductConfig, template: str | Path, out: str | Path)
     workbook = load_workbook(output)
     _fill_product_base_info(workbook, product)
     _fill_duty_definitions(workbook, product)
+    _fill_benefit_rules(workbook, product)
     if "Everida产品摘要" in workbook.sheetnames:
         del workbook["Everida产品摘要"]
     sheet = workbook.create_sheet("Everida产品摘要")
@@ -159,6 +160,16 @@ def _fill_duty_definitions(workbook, product: ProductConfig) -> None:
         if insurance_period:
             sheet.cell(row=index, column=5).value = insurance_period
             sheet.cell(row=index, column=6).value = insurance_period_flag
+
+
+def _fill_benefit_rules(workbook, product: ProductConfig) -> None:
+    if "给付责任" not in workbook.sheetnames:
+        return
+    sheet = workbook["给付责任"]
+    for index, benefit_name in enumerate(product.benefit_rules, start=2):
+        if index > sheet.max_row:
+            break
+        sheet.cell(row=index, column=3).value = benefit_name
 
 
 def generate_sql(product: ProductConfig) -> str:
